@@ -1,0 +1,5 @@
+C:\研\项目\下载\6\beam3DTC\beam3DTC\obj\x86\Debug\beam3DTC.csprojResolveAssemblyReference.cache
+C:\研\项目\下载\6\beam3DTC\beam3DTC\bin\Debug\beam3DTC.exe
+C:\研\项目\下载\6\beam3DTC\beam3DTC\bin\Debug\beam3DTC.pdb
+C:\研\项目\下载\6\beam3DTC\beam3DTC\obj\x86\Debug\beam3DTC.exe
+C:\研\项目\下载\6\beam3DTC\beam3DTC\obj\x86\Debug\beam3DTC.pdb

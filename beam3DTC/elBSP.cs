@@ -1,0 +1,766 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+/******************************************************************************
+ *
+ * Copyright (c) 2004-2005, Samuli Laine
+ * All rights reserved.
+ */
+
+namespace Wellcomm.BLL.beam
+{
+    class TempNode
+    {
+	    public List<TempNode>	            m_children;    // 2 个子节点
+	    public int					        m_splitAxis;   // 将垂直于m_splitAxis轴，平行于另两个轴的平面作为分割面
+	    public float				        m_splitPos;    // 该分割面经过的的点
+	    public List<Polygon>     	        m_polygons;    // 属于当前节点的多边形
+	    public int					        m_numPolygons; 
+
+        public TempNode()
+        {
+            m_splitAxis		 = -1;
+	        m_splitPos		 = 0;
+	        m_polygons		 = new List<Polygon>();
+	        m_numPolygons	 = 0;
+            m_children = new List<TempNode>(new TempNode[2]);
+        }
+
+    };
+
+    class SortItem
+	{
+		public float			v;
+		public Polygon         	polygon;
+        public uint	            iptr;
+
+        public SortItem()
+        {
+            iptr = 0;
+            v = 0;
+            polygon = new Polygon();
+        }
+
+        public SortItem(ref SortItem s)
+        {
+            v = s.v;
+            iptr = s.iptr;
+            polygon = new Polygon(ref s.polygon);
+        }
+
+        public SortItem(SortItem s)
+        {
+            v = s.v;
+            polygon = new Polygon(ref s.polygon);
+        }
+	};
+
+    class SortItemCompare : IComparer<SortItem>
+    {
+        public int Compare(SortItem a, SortItem b)  
+        {
+            if (a.v < b.v)
+			    return 1;
+            else if(a.v == b.v)
+                if(a.iptr < b.iptr)
+                    return 1;
+            return 0;
+        }
+    }
+    //------------------------------------------------------------------------
+    // Globals
+    //------------------------------------------------------------------------
+
+	class RecursionEntry
+	{
+		//public uint*          ptr;
+		public float		  dEnter;
+		public float		  dExit;
+	};
+    //------------------------------------------------------------------------
+
+    class BSP
+    {
+	    public TempNode		m_hierarchy;   // BSP 根节点
+	    public AABB			m_aabb;
+
+        int   g_maxPolygonsInLeaf = 4;
+        float EPS_RAY_ENDS = 1;
+        float EPS_BOUNDING_BOX = 1;
+        float EPS_POLY_BOX_OVERLAP = 1;
+        float EPS_ISECT_POLYGON = 1e-5f;
+        float EPS_DISTANCE = 1e-5f;
+
+        static List<SortItem> g_items;
+	    static int		  g_totalPolys;
+	    static int		  g_maxDepth;
+	    static int		  g_numNodes;
+	    static int		  g_listSize;
+
+        public BSP()
+        {
+            g_items = new List<SortItem>();
+            m_hierarchy = new TempNode();
+            m_hierarchy	    = null;
+	        //m_list			= null;
+            g_totalPolys = 0;
+	        g_maxDepth   = 0;
+	        g_numNodes   = 0;
+	        g_listSize   = 0;
+
+            m_aabb = new AABB();
+	        m_aabb.m_mn = new Vector3(0, 0, 0);
+            m_aabb.m_mx = new Vector3(0, 0, 0);
+        }
+
+        void swap(SortItem a, SortItem b)
+        {
+            SortItem tmp = new SortItem(ref a);
+            a.polygon = b.polygon; a.v = b.v; a.iptr = b.iptr;
+            b.polygon = tmp.polygon; b.v = tmp.v; b.iptr = tmp.iptr;
+        }
+
+        void swap(ref int a, ref int b)
+        {
+            int tmp = a;
+            a = b;
+            b = tmp;
+        }
+
+        public void insertionSort(ref List<SortItem> items, int start, int end)
+        {
+	        for (int i=start; i < end; i++)
+	        {
+		        int	     k  = -1;
+		        SortItem v0 = items[i];
+		        for (int j=i+1; j < end; j++)
+		        {
+			        if (items[j].v < v0.v)
+			        {
+				        v0 = items[j];
+				        k  = j;
+			        }
+		        }
+		        if (k >= 0)
+			        swap(items[i], items[k]);
+	        }
+        }
+
+        public int median3(int low, int high)
+        {
+	        int l = low;
+	        int c = (high + low)>>1;
+	        int h = high-2;
+
+	        SortItem lv = g_items[l];
+	        SortItem cv = g_items[c];
+	        SortItem hv = g_items[h];
+
+	        if(hv.v < lv.v) { swap(ref l, ref h); swap(lv, hv); }
+	        if(cv.v < lv.v) { swap(ref l, ref c); swap(lv, cv); }
+	        if(hv.v < cv.v) { swap(ref c, ref h); swap(cv, hv); }
+
+	        return c;
+        }
+
+        void quickSort(int low, int high)
+        {
+	        int SWITCHPOINT = 15;
+
+	        if((high - low) <= SWITCHPOINT)
+	        {
+		        insertionSort(ref g_items, low, high);
+		        return;
+	        }
+
+	        // 选则 pivot 
+	        int	pivotIndex	= median3(low, high);
+	        swap(g_items[high-1], g_items[pivotIndex]);
+
+	        SortItem pivot = g_items[high-1];
+
+	        // 对数据分类
+	        int i = low  - 1;
+	        int j = high - 1;
+	        while (i < j)
+	        {
+		        do { i++; } while(g_items[i].v < pivot.v);
+		        do { j--; } while(pivot.v < g_items[j].v);
+		        swap(g_items[i], g_items[j]);
+	        }
+
+	        // 恢复 pivot
+	        SortItem tmp = new SortItem(g_items[j]);
+	        g_items[j]	= g_items[i];
+	        g_items[i]	= g_items[high-1];
+	        g_items[high-1] = tmp;
+
+	        // 对子数组排序
+	        if((i - low) > 1)		quickSort(low, i);
+	        if((high - (i+1)) > 1)	quickSort(i+1, high);
+        }
+
+        // 选则最好分割面
+        int getOptimalSplitPlane(ref List<Polygon> polygons, int numPolygons, ref float bestSplitPos, ref AABB aabb)
+        {
+	        int	  bestSplitAxis = -1;
+	        float bestCost		= 0;
+
+	        for (int axis=0; axis < 3; axis++)
+	        {
+		        int[] nextAxis = new int[]{ 1, 2, 0, 1 };
+
+		        // 构建 item 数组
+                int k = 0;
+		        for (int i=0; i < numPolygons; i++)
+		        {
+			        Polygon poly = polygons[i];
+			        float mn = poly[0][axis];
+			        float mx = mn;
+			        for (int j=1; j < poly.numPoints(); j++)  // 得到每个多边形的包围盒
+			        {
+				        mn = Math.Min(mn, poly[j][axis]);
+				        mx = Math.Max(mx, poly[j][axis]);
+			        }
+
+                    g_items[k].v = mn;
+                    g_items[k].polygon = polygons[i];
+                    g_items[k].iptr = (uint)k;
+                    g_items[k + 1].v = mx;
+                    g_items[k + 1].iptr = (uint)k + 1; ;
+                    k += 2;
+		        }
+
+                /*
+                for (int i = 0; i < numPolygons * 2; i++)
+                {
+                    Console.WriteLine("{0}，{1}，{2}", i, g_items[i].v, g_items[i].iptr);
+                }
+                Console.WriteLine();
+                */
+
+		        // 排序
+		        quickSort(0, numPolygons*2);
+
+                /*
+                for (int i = 0; i < numPolygons * 2; i++)
+                {
+                    Console.WriteLine("{0}，{1}，{2}", i, g_items[i].v, g_items[i].iptr);
+                }
+                */
+
+		        // 区域
+		        int c1 = nextAxis[axis];
+		        int c2 = nextAxis[axis+1];
+		        float areaConst  = 2*(aabb.m_mx[c1]-aabb.m_mn[c1])*(aabb.m_mx[c2]-aabb.m_mn[c2]);
+		        float areaFactor = 2*((aabb.m_mx[c1]-aabb.m_mn[c1])+(aabb.m_mx[c2]-aabb.m_mn[c2]));
+		        float boundLeft  = aabb.m_mn[axis];
+		        float boundRight = aabb.m_mx[axis];
+
+                // 遍历，寻找最小代价分割面
+		        float bestAxisCost  = 0;
+		        float bestAxisSplit = 0;
+		        int leftPolys  = 0;
+		        int rightPolys = numPolygons;
+		        int bothPolys  = 0;
+		        for (int i=0; i < numPolygons*2; i++)
+		        {
+                    SortItem it = g_items[i];
+
+			        if (it.iptr % 2 == 0)
+			        {
+				        leftPolys++;
+				        bothPolys++;
+			        }
+
+			        if (it.v >= boundRight)
+				        break;
+
+			        if (it.v > boundLeft)
+			        {
+				        float split   = it.v;
+				        float aLeft	  = areaConst + areaFactor * (split - boundLeft);
+				        float aRight  = areaConst + areaFactor * (boundRight - split);
+				        float cost	  = aLeft*leftPolys + aRight*rightPolys;
+				        if (cost < bestAxisCost || bestAxisCost == 0)
+				        {
+					        bestAxisCost  = cost;
+					        bestAxisSplit = split;
+				        }
+			        }
+			        if (it.iptr % 2 == 1)
+			        {
+				        rightPolys--;
+				        bothPolys--;
+			        }
+		        }
+
+		        if ((bestAxisCost < bestCost || bestCost == 0) && bestAxisCost > 0)
+		        {
+			        bestCost	  = bestAxisCost;
+			        bestSplitPos  = bestAxisSplit;
+			        bestSplitAxis = axis;
+		        }
+	        }
+
+	        return bestSplitAxis;
+        }
+
+        //------------------------------------------------------------------------
+        // 构建 BSP 树
+        //------------------------------------------------------------------------
+
+        void swap(Polygon a, Polygon b)
+        {
+            Polygon tmp = new Polygon(ref a);
+            a.m_materialId = b.m_materialId; a.m_pleq = b.m_pleq; a.m_points = b.m_points; a.m_id = b.m_id;
+            b.m_materialId = tmp.m_materialId; b.m_pleq = tmp.m_pleq; b.m_points = tmp.m_points; b.m_id = tmp.m_id;
+        }
+
+        // 每个节点保存多边形数组，多边形数量，分割面，子节点指针
+        public TempNode constructRecursive(ref List<Polygon> polygons, int numPolygons, ref AABB aabb)
+        {
+	        // 叶子
+	        if (numPolygons <= g_maxPolygonsInLeaf)
+	        {
+		        g_totalPolys += numPolygons;
+		        TempNode n = new TempNode();
+                n.m_splitAxis = 3;
+		        n.m_numPolygons = numPolygons;
+		        if (numPolygons > 0)
+		        {
+			        n.m_polygons = new List<Polygon>();
+                    for (int i = 0; i < numPolygons; i++)
+                        n.m_polygons.Add(new Polygon(polygons[i]));
+		        }
+		        return n;
+	        }
+
+	        // 寻找最佳分割面
+	        float splitPos = 0;
+	        int	  axis = getOptimalSplitPlane(ref polygons, numPolygons, ref splitPos, ref aabb);
+	        if (axis < 0)  // 不可分割，成为叶子
+	        {
+		        g_totalPolys += numPolygons;
+		        TempNode n = new TempNode();
+		        n.m_numPolygons = numPolygons;
+		        n.m_polygons	 = new List<Polygon>();
+                for (int i = 0; i < polygons.Count; i++)
+                    n.m_polygons.Add(new Polygon(polygons[i]));
+                n.m_splitAxis = 3;
+		        return n;
+            }
+
+	        // 分割
+	        TempNode n1 = new TempNode();
+	        n1.m_splitAxis   = axis;
+	        n1.m_splitPos    = splitPos;
+	        n1.m_numPolygons = numPolygons;
+
+	        // 将多边形分类
+	        for (int c=0; c < 2; c++) // 0，分割面左侧；1，分割面右侧
+	        {
+		        AABB aabb2 = new AABB(ref aabb);  // 父区域大小
+
+		        if (c==0)
+			        aabb2.m_mx[axis] = splitPos;  
+		        else
+			        aabb2.m_mn[axis] = splitPos;
+
+		        AABB aabbTest = aabb2;  // 子区域大小
+
+                // 每个维度扩大一些
+                Vector3 v = new Vector3(EPS_POLY_BOX_OVERLAP, EPS_POLY_BOX_OVERLAP, EPS_POLY_BOX_OVERLAP);
+                aabbTest.m_mn -= v;
+                aabbTest.m_mx += v;
+
+		        // 每个多边形应该位于哪个子区域内
+		        int childPolys = 0;
+		        for (int i=0; i < numPolygons; i++)
+		        {
+			        Polygon poly = new Polygon(polygons[i]);	// 复制
+			        AABB    pbox = poly.getAABB();
+
+			        bool overlap = false;
+			        if (pbox.m_mn[axis] == splitPos && pbox.m_mx[axis] == splitPos)  // 本身是一个分割面
+				        overlap = (c==1); // 本身是分割面，属于右子节点
+			        else
+			        {
+                        // 确定分割面
+				        for (int j=0; j < poly.numPoints(); j++)
+				        {
+					        float x = poly[j][axis];
+					        if (c==0 && x < splitPos)
+						        overlap = true;  // 被包含在当前半区域内
+					        if (c==1 && x > splitPos)
+						        overlap = true;
+				        }
+			        }
+
+			        if (!overlap)
+				        continue;
+
+			        if (poly.clip(ref aabbTest) != Polygon.ClipResult.CLIP_VANISHED)
+			        {
+				        if (i != childPolys)
+					        swap(polygons[i], polygons[childPolys]);
+				        childPolys++;
+			        }
+		        }
+
+		        n1.m_children[c] = constructRecursive(ref polygons, childPolys, ref aabb2);
+	        }
+
+	        return n1;
+        }
+
+        public int getDepth(TempNode n)
+        {
+            g_numNodes++;
+            if (n.m_splitAxis == 3)
+            {
+                g_listSize += n.m_numPolygons + 1;
+                return 1;
+            }
+            g_listSize += 2;
+            int d0 = getDepth(n.m_children[0]);
+            int d1 = getDepth(n.m_children[1]);
+            if (d0 > d1)
+                return d0 + 1;
+            return d1 + 1;
+        }
+
+        // 创建 BSP 树，得到 BSP 树相关信息
+        public void constructHierarchy(ref List<Polygon> polygons, int numPolygons)
+        {
+            g_totalPolys = 0;
+            // 计算包围盒，构建排序数组
+            g_items = new List<SortItem>();
+            for (int i = 0; i < 2 * numPolygons; i++)
+                g_items.Add(new SortItem());
+
+            for (int i = 0; i < 3; i++)
+                m_aabb.m_mn[i] = m_aabb.m_mx[i] = polygons[0][0][i];
+
+            for (int i = 0; i < numPolygons; i++)
+            {
+                Polygon poly = polygons[i];
+                for (int j = 0; j < poly.numPoints(); j++)
+                    m_aabb.grow(poly[j]);
+            }
+
+            // 稍微扩大包围盒，把多边形的边界也包含进来
+            Vector3 v = new Vector3(EPS_BOUNDING_BOX, EPS_BOUNDING_BOX, EPS_BOUNDING_BOX);
+            m_aabb.m_mn -= v;
+            m_aabb.m_mx += v;
+
+            // 构建 BSP 树
+            m_hierarchy = constructRecursive(ref polygons, numPolygons, ref m_aabb);  // 根节点
+            Console.WriteLine("total polygons: {0}", g_totalPolys);
+
+            // 计算最大深度
+            g_numNodes = 0;
+            g_listSize = 0;
+
+            g_maxDepth = getDepth(m_hierarchy);  // BSP 树的最大深度
+            Console.WriteLine("nodes: {0}, max depth: {1}\n", g_numNodes, g_maxDepth);
+
+            // 清空
+            g_items.Clear();
+        }
+
+        //------------------------------------------------------------------------
+        // Ray cast helpers
+        //------------------------------------------------------------------------
+	    Vector3					 g_orig = new Vector3();
+	    Vector3					 g_dest = new Vector3();
+	    Vector3					 g_dir = new Vector3();
+	    Vector3					 g_invdir = new Vector3();
+	    uint[]			         g_dirsgn = new uint[3];
+	    HashSet<Polygon>         g_foundPolygons = new HashSet<Polygon>();
+
+	    Vector3					 g_beamMid = new Vector3();
+	    Vector3					 g_beamDiag = new Vector3();
+	    Beam					 g_beamBeam = new Beam();
+	    List<Polygon>	         g_beamResult;
+
+        public void setupRayCast(ref Ray ray)
+        {
+            Vector3 ndir = EPS_RAY_ENDS * Vector3.normalize(ray.m_b - ray.m_a);  // 射线单位向量
+
+            g_orig = ray.m_a + ndir;
+            g_dest = ray.m_b - ndir;
+            g_dir = g_dest - g_orig;
+
+            g_invdir.set(1 / g_dir.x, 1 / g_dir.y, 1 / g_dir.z);
+            g_dirsgn[0] = ((uint)g_invdir[0]) >> 31;
+            g_dirsgn[1] = ((uint)g_invdir[1]) >> 31;
+            g_dirsgn[2] = ((uint)g_invdir[2]) >> 31;
+        }
+
+        public float getSplitDistance(float splitPos, int axis)
+        {
+	        return (splitPos-g_orig[axis])*g_invdir[axis];
+        }
+
+        public void getEnterExitDistances(ref AABB aabb, ref float dEnter, ref float dExit)
+        {
+            float[] x = new float[2];
+            float[] y = new float[2];
+            float[] z = new float[2];
+
+            // 进入和退出的距离
+            x[0] = getSplitDistance(aabb.m_mn[0], 0);
+            y[0] = getSplitDistance(aabb.m_mn[1], 1);
+            z[0] = getSplitDistance(aabb.m_mn[2], 2);
+            x[1] = getSplitDistance(aabb.m_mx[0], 0);
+            y[1] = getSplitDistance(aabb.m_mx[1], 1);
+            z[1] = getSplitDistance(aabb.m_mx[2], 2);
+
+            int sx = (int)g_dirsgn[0];
+            int sy = (int)g_dirsgn[1];
+            int sz = (int)g_dirsgn[2];
+
+            // 进入和退出
+            float mn0 = x[sx];
+            float mx0 = x[sx ^ 1];
+            float mn1 = y[sy];
+            float mx1 = y[sy ^ 1];
+            float mn2 = z[sz];
+            float mx2 = z[sz ^ 1];
+
+            // 得到最大进入距离和最小退出距离
+            dEnter = mn0;
+            if (mn1 > dEnter) dEnter = mn1;
+            if (mn2 > dEnter) dEnter = mn2;
+            dExit = mx0;
+            if (mx1 < dExit) dExit = mx1;
+            if (mx2 < dExit) dExit = mx2;
+        }
+
+        //------------------------------------------------------------------------
+        // Ray casts
+        //------------------------------------------------------------------------
+
+        public bool isectPolygonsAny(ref List<Polygon> list, int numPolygons)
+        {
+            Ray ray = new Ray(ref g_orig, ref g_dest);
+            int i = 0;
+            while (numPolygons-- > 0)
+            {
+                Polygon poly = list[i];
+                if (ray.intersect(ref poly))
+                    return true;
+            }
+            return false;
+        }
+
+        public bool rayCastListAny(TempNode node, float dEnter, float dExit)
+        {
+            if (dEnter < 0) dEnter = 0;
+            if (dExit > 1) dExit = 1;
+            if (dEnter > dExit + EPS_DISTANCE) return false;
+
+            if (node.m_splitAxis < 0)
+            {
+                // 叶子节点
+                if (node.m_numPolygons > 0)
+                {
+			        if (isectPolygonsAny(ref node.m_polygons, node.m_numPolygons))
+				        return true;
+                }
+                return false;
+            }
+
+            float d = getSplitDistance(node.m_splitPos, node.m_splitAxis);
+
+            if (node.m_children[1] != null && d <= dExit + EPS_DISTANCE)
+            {
+                float newEnter = dEnter;
+                if (d > newEnter) 
+                    newEnter = d;
+                rayCastListAny(node.m_children[1], newEnter, dExit);
+            }
+
+            if (node.m_children[0] != null && d >= dEnter - EPS_DISTANCE)
+            {
+                if (d < dExit)
+                    dExit = d;
+                rayCastListAny(node.m_children[0], dEnter, dExit);
+            }
+
+            return false;
+        }
+
+        public bool rayCastAny(ref Ray ray)
+        {
+            setupRayCast(ref ray);
+            float dEnter = 0, dExit = 0;
+            getEnterExitDistances(ref m_aabb, ref dEnter, ref dExit);
+            bool result = rayCastListAny(m_hierarchy, dEnter, dExit);
+            return result;
+        }
+
+        Vector3 g_intersectionPoint;
+
+        public Polygon isectPolygons(ref List<Polygon> list, int numPolygons, float dEnter, float dExit)
+        {
+            Polygon res = null;
+            float thigh = dExit + EPS_ISECT_POLYGON;
+            float tlow = dEnter - EPS_ISECT_POLYGON;
+            Ray ray = new Ray(ref g_orig, ref g_dest);
+
+            int i = 0;
+            while (numPolygons-- > 0)
+            {
+                Polygon poly = list[i++];
+
+                if (ray.intersect(ref poly))
+                {
+                    float t = -Vector4.dot(ref g_orig, poly.getPleq()) / Vector3.dot(ref g_dir, poly.getNormal());
+                    if (t < tlow || t > thigh)
+                        continue;
+
+                    thigh = t;
+                    res = poly;
+
+                    g_intersectionPoint = g_orig + t * g_dir;
+                }
+            }
+
+            return res;
+        }
+
+        public Polygon rayCastList(TempNode node, float dEnter, float dExit)
+        {
+            if (dEnter < 0) dEnter = 0;
+            if (dExit > 1) dExit = 1;
+            if (dEnter > dExit + EPS_DISTANCE) return null;
+
+            if (node.m_splitAxis < 0)
+            {
+                // 叶子节点
+                if (node.m_numPolygons > 0)
+                {
+                    Polygon poly = isectPolygons(ref node.m_polygons, node.m_numPolygons, dEnter, dEnter);
+                    if (poly != null)
+                        return poly;
+                }
+                return null;
+            }
+
+            float d = getSplitDistance(node.m_splitPos, node.m_splitAxis);
+
+            if (node.m_children[1] != null && d <= dExit + EPS_DISTANCE)
+            {
+                float newEnter = dEnter;
+                if (d > newEnter)
+                    newEnter = d;
+                rayCastList(node.m_children[1], newEnter, dExit);
+            }
+
+            if (node.m_children[0] != null && d >= dEnter - EPS_DISTANCE)
+            {
+                if (d < dExit)
+                    dExit = d;
+                rayCastList(node.m_children[0], dEnter, dExit);
+            }
+
+            return null;
+        }
+
+        public Polygon rayCast(ref Ray ray)
+        {
+            setupRayCast(ref ray);
+            float dEnter = 0, dExit = 0;
+            getEnterExitDistances(ref m_aabb, ref dEnter, ref dExit);
+            Polygon result = rayCastList(m_hierarchy, dEnter, dExit);
+            return result;
+        }
+        //------------------------------------------------------------------------
+        
+        //------------------------------------------------------------------------
+        // Beam 碰撞检测
+        //------------------------------------------------------------------------
+
+        // m, d：区域
+        // p：beam 的第一个面
+        public static bool intersectAABBFrustum(ref Vector3 m,
+												 ref Vector3 d,
+												 ref Beam beam)
+        {
+	        for (int i=0; i < beam.numPleqs(); i++)
+	        {
+                float NP = d.x * Math.Abs(beam.getPleq(i).x) + d.y * Math.Abs(beam.getPleq(i).y) + d.z * Math.Abs(beam.getPleq(i).z);  // 区域对角向量的一半与beam面法向量的点乘，> 0 锐角
+                float MP = m.x * beam.getPleq(i).x + m.y * beam.getPleq(i).y + m.z * beam.getPleq(i).z + beam.getPleq(i).w;                  // 将区域中心代入平面方程，> 0 点在平面前
+		        if ((MP+NP) < 0.0f)  // beam 不会进入该区域
+			        return false;
+	        }
+	        return true;
+        }
+
+        public void beamCastRecursive(TempNode node)
+        {
+	        // beam 不会进入当前区域
+	        if (g_beamBeam.numPleqs() > 0  && !intersectAABBFrustum(ref g_beamMid, ref g_beamDiag, ref g_beamBeam))
+		        return;
+
+	        // 叶子
+            if (node.m_splitAxis == 3)  
+	        {
+		        for (int i=0; i < node.m_numPolygons; i++)
+		        {
+			        Polygon poly = node.m_polygons[i];
+			        if (g_foundPolygons.Contains(poly))  // 已经保存过了
+				        continue;
+
+			        g_beamResult.Add(new Polygon(ref poly));
+			        g_foundPolygons.Add(new Polygon(ref poly));
+		        }
+		        return;
+	        } 
+	 
+	        // 递归
+	        int axis	  = node.m_splitAxis;
+	        float		 splitPos = node.m_splitPos;
+	                                    
+
+	        float om = g_beamMid[axis];
+	        float od = g_beamDiag[axis];
+
+            g_beamMid[axis] = (float)0.5 * (om - od + splitPos);
+	        g_beamDiag[axis] = splitPos - g_beamMid[axis];
+	        beamCastRecursive(node.m_children[0]);
+	
+	        g_beamMid[axis]  = .5f*(om+od + splitPos);
+	        g_beamDiag[axis] = g_beamMid[axis] - splitPos;
+	        beamCastRecursive(node.m_children[1]);
+
+	        g_beamMid[axis]  = om;
+	        g_beamDiag[axis] = od;
+        }
+
+        public void beamCast(ref Beam beam, ref List<Polygon> result) 
+        {
+	        // m_aabb 当前区域的包围盒
+            g_beamMid = m_aabb.m_mn + m_aabb.m_mx;
+            g_beamDiag = m_aabb.m_mx - m_aabb.m_mn;
+            g_beamMid.opMultiplyAssign((float)0.5);  // 包围盒的中心
+            g_beamDiag.opMultiplyAssign((float)0.5); // 包围盒的对角线向量的一半，与起点无关，m_aabb.mn + g_beamDiag = g_beamMid
+	        g_beamBeam = beam;
+	        g_beamResult = result;
+
+
+	        g_foundPolygons.Clear();     
+	        beamCastRecursive(m_hierarchy);   
+        }
+
+        public Vector3 getIntersectionPoint()
+        {
+	        return g_intersectionPoint;
+        }
+
+    };
+}
