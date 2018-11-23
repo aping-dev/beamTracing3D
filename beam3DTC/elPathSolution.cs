@@ -5,9 +5,61 @@ using System.Text;
 
 
 /******************************************************************************
+
  *
+
  * Copyright (c) 2004-2005, Samuli Laine
+ * 
+   Copyright (c) 2018-2019, 尹静萍
+ * 
  * All rights reserved.
+
+ *
+
+ * Redistribution and use in source and binary forms, with or without modification,
+
+ * are permitted provided that the following conditions are met:
+
+ *
+
+ *  - Redistributions of source code must retain the above copyright notice,
+
+ *    this list of conditions and the following disclaimer.
+
+ *  - Redistributions in binary form must reproduce the above copyright notice,
+
+ *    this list of conditions and the following disclaimer in the documentation
+
+ *    and/or other materials provided with the distribution.
+
+ *  - Neither the name of the copyright holder nor the names of its contributors
+
+ *    may be used to endorse or promote products derived from this software
+
+ *    without specific prior written permission.
+
+ *
+
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+
+ * OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+
+ * POSSIBILITY OF SUCH DAMAGE.
+
  */
 
 namespace Wellcomm.BLL.beam
@@ -107,7 +159,7 @@ namespace Wellcomm.BLL.beam
 
 	        m_paths.Clear();
 
-	        if (m_solutionNodes.Count==0 || m_cachedSource != source)  // target 改变后不影响
+            if (m_solutionNodes.Count == 0 || m_cachedSource.x != source.x || m_cachedSource.y != source.y || m_cachedSource.z != source.z)  // target 改变后不影响
 	        {
 		        clearCache();  
 
@@ -149,11 +201,20 @@ namespace Wellcomm.BLL.beam
 		        for (int i=imn; i < imx; i++)
 		        {
 			        float d = Vector4.dot(ref target, m_failPlanes[i]);
+
+                    //if (i == 318)
+                    //{
+                    //    Console.WriteLine("{0}\t{1}\t{2}", i, numTested, d);
+                    //    Console.WriteLine("{0}\t{1}\t{2}\t{3}", m_failPlanes[i].x, m_failPlanes[i].y, m_failPlanes[i].z, m_failPlanes[i].w);
+                    //}
 			        if (d >= 0)  // 在失败面的前面，也就是在 beam 面的后面，可能有合法路径
 			        {
 				        validatePath(ref source, ref target, i, m_failPlanes[i]);  // 验证路径，更新 m_failPlanes[i]，m_path
-				
+                        int cnt = m_paths.Count;
+                        //if (cnt == 5)
+                        //    cnt = cnt;
 				        numTested++;
+                        //Console.WriteLine("{0}\t{1}\t{2}", i, numTested, d);
 			        }
 			        if (i == imn || d > maxdot)
 				        maxdot = d;
@@ -165,7 +226,13 @@ namespace Wellcomm.BLL.beam
 
 	        m_pathFirstSet.Clear();
 
-	        //printf("paths: %d (proc %d = %.2f %%, tested %d, valid %d)\n", m_solutionNodes.size(), numProc * DISTANCE_SKIP_BUCKET_SIZE, (float)numProc/nb*100.f, numTested, m_paths.size());
+	        Console.WriteLine("paths: {0} (proc {1} = {2} %, tested {3}, valid {4})", m_solutionNodes.Count, numProc * DISTANCE_SKIP_BUCKET_SIZE, (float)numProc/nb*100, numTested, m_paths.Count);
+
+            //for (int i = 0; i < m_paths.Count; i++)
+            //{
+            //    Console.WriteLine("{0}\t{1}\t{2}\t{3}", i, m_paths[i].m_order, m_paths[i].m_points.Count, m_paths[i].m_polygons.Count);
+            //}
+        
         }
 
         // 找到最有可能失败的面
@@ -185,13 +252,6 @@ namespace Wellcomm.BLL.beam
         }
 
         // failPlane 是输出结果
-        public void validatePath(ref Vector3 source,
-                                ref Vector3 target,
-                                int nodeIndex,
-                                ref Vector4 failPlane)
-        {
-            validatePath(ref source, ref target, nodeIndex, failPlane);
-        }
         public void validatePath(ref Vector3 source,
 								ref Vector3 target,
 								int nodeIndex,
@@ -349,8 +409,6 @@ namespace Wellcomm.BLL.beam
 
             foreach(List<int> paths in m_pathFirstSet.Values)
 	        {
-		        //List<int> paths = m_pathFirstSet[j];
-
                 for(int i=0; i<paths.Count; i++)
                 {
 		            Path p = m_paths[paths[i]];

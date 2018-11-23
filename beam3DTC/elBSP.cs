@@ -4,9 +4,61 @@ using System.Linq;
 using System.Text;
 
 /******************************************************************************
+
  *
+
  * Copyright (c) 2004-2005, Samuli Laine
+ * 
+   Copyright (c) 2018-2019, 尹静萍
+ * 
  * All rights reserved.
+
+ *
+
+ * Redistribution and use in source and binary forms, with or without modification,
+
+ * are permitted provided that the following conditions are met:
+
+ *
+
+ *  - Redistributions of source code must retain the above copyright notice,
+
+ *    this list of conditions and the following disclaimer.
+
+ *  - Redistributions in binary form must reproduce the above copyright notice,
+
+ *    this list of conditions and the following disclaimer in the documentation
+
+ *    and/or other materials provided with the distribution.
+
+ *  - Neither the name of the copyright holder nor the names of its contributors
+
+ *    may be used to endorse or promote products derived from this software
+
+ *    without specific prior written permission.
+
+ *
+
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+
+ * OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+
+ * POSSIBILITY OF SUCH DAMAGE.
+
  */
 
 namespace Wellcomm.BLL.beam
@@ -53,6 +105,7 @@ namespace Wellcomm.BLL.beam
         public SortItem(SortItem s)
         {
             v = s.v;
+            iptr = s.iptr;
             polygon = new Polygon(ref s.polygon);
         }
 	};
@@ -69,16 +122,6 @@ namespace Wellcomm.BLL.beam
             return 0;
         }
     }
-    //------------------------------------------------------------------------
-    // Globals
-    //------------------------------------------------------------------------
-
-	class RecursionEntry
-	{
-		//public uint*          ptr;
-		public float		  dEnter;
-		public float		  dExit;
-	};
     //------------------------------------------------------------------------
 
     class BSP
@@ -97,18 +140,14 @@ namespace Wellcomm.BLL.beam
 	    static int		  g_totalPolys;
 	    static int		  g_maxDepth;
 	    static int		  g_numNodes;
-	    static int		  g_listSize;
 
         public BSP()
         {
             g_items = new List<SortItem>();
             m_hierarchy = new TempNode();
-            m_hierarchy	    = null;
-	        //m_list			= null;
             g_totalPolys = 0;
 	        g_maxDepth   = 0;
 	        g_numNodes   = 0;
-	        g_listSize   = 0;
 
             m_aabb = new AABB();
 	        m_aabb.m_mn = new Vector3(0, 0, 0);
@@ -131,20 +170,37 @@ namespace Wellcomm.BLL.beam
 
         public void insertionSort(ref List<SortItem> items, int start, int end)
         {
-	        for (int i=start; i < end; i++)
+	        for (int i=start; i < end-1; i++)
 	        {
-		        int	     k  = -1;
-		        SortItem v0 = items[i];
+		        int	  k  = -1;
+                float v = items[i].v;
+                uint iptr = items[i].iptr;
 		        for (int j=i+1; j < end; j++)
 		        {
-			        if (items[j].v < v0.v)
+			        if (items[j].v < v)
 			        {
-				        v0 = items[j];
+                        v = items[j].v;
 				        k  = j;
+                        iptr = items[j].iptr;
 			        }
+                    else if (items[j].v == v)
+                    {
+                        if (items[j].iptr < iptr)
+                        {
+                            v = items[j].v;
+                            k = j;
+                            iptr = items[j].iptr;
+                        }
+                    }
 		        }
 		        if (k >= 0)
 			        swap(items[i], items[k]);
+
+                //for (int j = start; j < end; j++)
+                //{
+                //    Console.WriteLine("{0}，{1}，{2}", j, g_items[j].v, g_items[j].iptr);
+                //}
+                //Console.WriteLine();
 	        }
         }
 
@@ -158,9 +214,9 @@ namespace Wellcomm.BLL.beam
 	        SortItem cv = g_items[c];
 	        SortItem hv = g_items[h];
 
-	        if(hv.v < lv.v) { swap(ref l, ref h); swap(lv, hv); }
-	        if(cv.v < lv.v) { swap(ref l, ref c); swap(lv, cv); }
-	        if(hv.v < cv.v) { swap(ref c, ref h); swap(cv, hv); }
+            if (hv.v < lv.v || (hv.v == lv.v && hv.iptr < lv.iptr)) { swap(ref l, ref h); swap(lv, hv); }
+            if (cv.v < lv.v || (cv.v == lv.v && cv.iptr < lv.iptr)) { swap(ref l, ref c); swap(lv, cv); }
+            if (hv.v < cv.v || (hv.v == cv.v && hv.iptr < cv.iptr)) { swap(ref c, ref h); swap(cv, hv); }
 
 	        return c;
         }
@@ -168,6 +224,7 @@ namespace Wellcomm.BLL.beam
         void quickSort(int low, int high)
         {
 	        int SWITCHPOINT = 15;
+            //int SWITCHPOINT = 100;
 
 	        if((high - low) <= SWITCHPOINT)
 	        {
@@ -186,8 +243,8 @@ namespace Wellcomm.BLL.beam
 	        int j = high - 1;
 	        while (i < j)
 	        {
-		        do { i++; } while(g_items[i].v < pivot.v);
-		        do { j--; } while(pivot.v < g_items[j].v);
+                do { i++; } while (i < j && g_items[i].v < pivot.v || (g_items[i].v == pivot.v && g_items[i].iptr < pivot.iptr));
+                do { j--; } while (i < j && pivot.v < g_items[j].v || (pivot.v == g_items[j].v && pivot.iptr < g_items[j].iptr));
 		        swap(g_items[i], g_items[j]);
 	        }
 
@@ -233,23 +290,21 @@ namespace Wellcomm.BLL.beam
                     k += 2;
 		        }
 
-                /*
-                for (int i = 0; i < numPolygons * 2; i++)
-                {
-                    Console.WriteLine("{0}，{1}，{2}", i, g_items[i].v, g_items[i].iptr);
-                }
-                Console.WriteLine();
-                */
-
+                //for (int i = 0; i < numPolygons * 2; i++)
+                //{
+                //    Console.WriteLine("{0}，{1}，{2}", i, g_items[i].v, g_items[i].iptr);
+                //}
+                //Console.WriteLine();
+                
 		        // 排序
 		        quickSort(0, numPolygons*2);
 
-                /*
-                for (int i = 0; i < numPolygons * 2; i++)
-                {
-                    Console.WriteLine("{0}，{1}，{2}", i, g_items[i].v, g_items[i].iptr);
-                }
-                */
+                //for (int i = 0; i < numPolygons * 2; i++)
+                //{
+                //    Console.WriteLine("{0}，{1}，{2}", i, g_items[i].v, g_items[i].iptr);
+                //}
+                //Console.WriteLine();
+                //Console.WriteLine();
 
 		        // 区域
 		        int c1 = nextAxis[axis];
@@ -327,7 +382,6 @@ namespace Wellcomm.BLL.beam
 	        {
 		        g_totalPolys += numPolygons;
 		        TempNode n = new TempNode();
-                n.m_splitAxis = 3;
 		        n.m_numPolygons = numPolygons;
 		        if (numPolygons > 0)
 		        {
@@ -349,7 +403,6 @@ namespace Wellcomm.BLL.beam
 		        n.m_polygons	 = new List<Polygon>();
                 for (int i = 0; i < polygons.Count; i++)
                     n.m_polygons.Add(new Polygon(polygons[i]));
-                n.m_splitAxis = 3;
 		        return n;
             }
 
@@ -369,7 +422,7 @@ namespace Wellcomm.BLL.beam
 		        else
 			        aabb2.m_mn[axis] = splitPos;
 
-		        AABB aabbTest = aabb2;  // 子区域大小
+		        AABB aabbTest = new AABB(ref aabb2);  // 子区域大小
 
                 // 每个维度扩大一些
                 Vector3 v = new Vector3(EPS_POLY_BOX_OVERLAP, EPS_POLY_BOX_OVERLAP, EPS_POLY_BOX_OVERLAP);
@@ -419,12 +472,10 @@ namespace Wellcomm.BLL.beam
         public int getDepth(TempNode n)
         {
             g_numNodes++;
-            if (n.m_splitAxis == 3)
+            if (n.m_splitAxis < 0)
             {
-                g_listSize += n.m_numPolygons + 1;
                 return 1;
             }
-            g_listSize += 2;
             int d0 = getDepth(n.m_children[0]);
             int d1 = getDepth(n.m_children[1]);
             if (d0 > d1)
@@ -462,7 +513,6 @@ namespace Wellcomm.BLL.beam
 
             // 计算最大深度
             g_numNodes = 0;
-            g_listSize = 0;
 
             g_maxDepth = getDepth(m_hierarchy);  // BSP 树的最大深度
             Console.WriteLine("nodes: {0}, max depth: {1}\n", g_numNodes, g_maxDepth);
@@ -479,7 +529,7 @@ namespace Wellcomm.BLL.beam
 	    Vector3					 g_dir = new Vector3();
 	    Vector3					 g_invdir = new Vector3();
 	    uint[]			         g_dirsgn = new uint[3];
-	    HashSet<Polygon>         g_foundPolygons = new HashSet<Polygon>();
+	    HashSet<int>             g_foundPolygons = new HashSet<int>();
 
 	    Vector3					 g_beamMid = new Vector3();
 	    Vector3					 g_beamDiag = new Vector3();
@@ -495,9 +545,9 @@ namespace Wellcomm.BLL.beam
             g_dir = g_dest - g_orig;
 
             g_invdir.set(1 / g_dir.x, 1 / g_dir.y, 1 / g_dir.z);
-            g_dirsgn[0] = ((uint)g_invdir[0]) >> 31;
-            g_dirsgn[1] = ((uint)g_invdir[1]) >> 31;
-            g_dirsgn[2] = ((uint)g_invdir[2]) >> 31;
+            g_dirsgn[0] = (uint)(g_invdir[0] < 0 ? 1 : 0); 
+            g_dirsgn[1] = (uint)(g_invdir[1] < 0 ? 1 : 0);
+            g_dirsgn[2] = (uint)(g_invdir[2] < 0 ? 1 : 0);
         }
 
         public float getSplitDistance(float splitPos, int axis)
@@ -547,10 +597,9 @@ namespace Wellcomm.BLL.beam
         public bool isectPolygonsAny(ref List<Polygon> list, int numPolygons)
         {
             Ray ray = new Ray(ref g_orig, ref g_dest);
-            int i = 0;
             while (numPolygons-- > 0)
             {
-                Polygon poly = list[i];
+                Polygon poly = list[numPolygons];
                 if (ray.intersect(ref poly))
                     return true;
             }
@@ -576,21 +625,45 @@ namespace Wellcomm.BLL.beam
 
             float d = getSplitDistance(node.m_splitPos, node.m_splitAxis);
 
-            if (node.m_children[1] != null && d <= dExit + EPS_DISTANCE)
+            if (g_dirsgn[node.m_splitAxis] == 0)  // 正数
             {
-                float newEnter = dEnter;
-                if (d > newEnter) 
-                    newEnter = d;
-                rayCastListAny(node.m_children[1], newEnter, dExit);
-            }
+                if (node.m_children[1] != null && d <= dExit + EPS_DISTANCE)
+                {
+                    float newEnter = dEnter;
+                    if (d > newEnter)
+                        newEnter = d;
+                    if (rayCastListAny(node.m_children[1], newEnter, dExit))
+                        return true;
+                }
 
-            if (node.m_children[0] != null && d >= dEnter - EPS_DISTANCE)
+                if (node.m_children[0] != null && d >= dEnter - EPS_DISTANCE)
+                {
+                    if (d < dExit)
+                        dExit = d;
+                    if (rayCastListAny(node.m_children[0], dEnter, dExit))
+                        return true;
+                }
+            }
+            else
             {
-                if (d < dExit)
-                    dExit = d;
-                rayCastListAny(node.m_children[0], dEnter, dExit);
-            }
+                if (node.m_children[0] != null && d <= dExit + EPS_DISTANCE)
+                {
+                    float newEnter = dEnter;
+                    if (d > newEnter)
+                        newEnter = d;
+                    if (rayCastListAny(node.m_children[0], newEnter, dExit))
+                        return true;
+                }
 
+                if (node.m_children[1] != null && d >= dEnter - EPS_DISTANCE)
+                {
+                    if (d < dExit)
+                        dExit = d;
+                    if (rayCastListAny(node.m_children[1], dEnter, dExit))
+                        return true;
+                }
+            }
+            
             return false;
         }
 
@@ -612,10 +685,9 @@ namespace Wellcomm.BLL.beam
             float tlow = dEnter - EPS_ISECT_POLYGON;
             Ray ray = new Ray(ref g_orig, ref g_dest);
 
-            int i = 0;
             while (numPolygons-- > 0)
             {
-                Polygon poly = list[i++];
+                Polygon poly = list[numPolygons];
 
                 if (ray.intersect(ref poly))
                 {
@@ -653,21 +725,40 @@ namespace Wellcomm.BLL.beam
 
             float d = getSplitDistance(node.m_splitPos, node.m_splitAxis);
 
-            if (node.m_children[1] != null && d <= dExit + EPS_DISTANCE)
+            if (g_dirsgn[node.m_splitAxis] == 0)  // 正数
             {
-                float newEnter = dEnter;
-                if (d > newEnter)
-                    newEnter = d;
-                rayCastList(node.m_children[1], newEnter, dExit);
-            }
+                if (node.m_children[1] != null && d <= dExit + EPS_DISTANCE)
+                {
+                    float newEnter = dEnter;
+                    if (d > newEnter)
+                        newEnter = d;
+                    rayCastList(node.m_children[1], newEnter, dExit);
+                }
 
-            if (node.m_children[0] != null && d >= dEnter - EPS_DISTANCE)
+                if (node.m_children[0] != null && d >= dEnter - EPS_DISTANCE)
+                {
+                    if (d < dExit)
+                        dExit = d;
+                    rayCastList(node.m_children[0], dEnter, dExit);
+                }
+            }
+            else
             {
-                if (d < dExit)
-                    dExit = d;
-                rayCastList(node.m_children[0], dEnter, dExit);
-            }
+                if (node.m_children[0] != null && d <= dExit + EPS_DISTANCE)
+                {
+                    float newEnter = dEnter;
+                    if (d > newEnter)
+                        newEnter = d;
+                    rayCastList(node.m_children[0], newEnter, dExit);
+                }
 
+                if (node.m_children[1] != null && d >= dEnter - EPS_DISTANCE)
+                {
+                    if (d < dExit)
+                        dExit = d;
+                    rayCastList(node.m_children[1], dEnter, dExit);
+                }
+            }
             return null;
         }
 
@@ -708,33 +799,32 @@ namespace Wellcomm.BLL.beam
 		        return;
 
 	        // 叶子
-            if (node.m_splitAxis == 3)  
+            if (node.m_splitAxis < 0)  
 	        {
 		        for (int i=0; i < node.m_numPolygons; i++)
 		        {
 			        Polygon poly = node.m_polygons[i];
-			        if (g_foundPolygons.Contains(poly))  // 已经保存过了
+			        if (g_foundPolygons.Contains(poly.m_id))  // 已经保存过了
 				        continue;
 
 			        g_beamResult.Add(new Polygon(ref poly));
-			        g_foundPolygons.Add(new Polygon(ref poly));
+                    g_foundPolygons.Add(poly.m_id);
 		        }
 		        return;
 	        } 
 	 
 	        // 递归
-	        int axis	  = node.m_splitAxis;
-	        float		 splitPos = node.m_splitPos;
+	        int   axis	   = node.m_splitAxis;
+	        float splitPos = node.m_splitPos;
 	                                    
-
 	        float om = g_beamMid[axis];
 	        float od = g_beamDiag[axis];
 
             g_beamMid[axis] = (float)0.5 * (om - od + splitPos);
 	        g_beamDiag[axis] = splitPos - g_beamMid[axis];
 	        beamCastRecursive(node.m_children[0]);
-	
-	        g_beamMid[axis]  = .5f*(om+od + splitPos);
+
+            g_beamMid[axis] = (float)0.5 * (om + od + splitPos);
 	        g_beamDiag[axis] = g_beamMid[axis] - splitPos;
 	        beamCastRecursive(node.m_children[1]);
 
