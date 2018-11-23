@@ -2,7 +2,7 @@ BSD 3-Clause License
 
 Copyright (c) 2004-2005, Samuli Laine
 
-Copyright (c) 2018-2019, Òü¾²Æ¼
+Copyright (c) 2018-2019, å°¹é™è
 
 All rights reserved.
 
